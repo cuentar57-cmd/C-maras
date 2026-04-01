@@ -211,7 +211,23 @@ padding: 12px 14px; margin-bottom: 16px; font-size: 11px; color: #c8880a; line-h
 
 <div id="toast"></div>
 
-<script>
+<script type="module">
+// 🔥 FIREBASE ─────────────────────────────────────────
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
+import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBJ1boNyDaiIMhDjYJOCGOkf8-NHMj5l5A",
+  authDomain: "camaras-d10fa.firebaseapp.com",
+  projectId: "camaras-d10fa",
+  storageBucket: "camaras-d10fa.firebasestorage.app",
+  messagingSenderId: "438870706357",
+  appId: "1:438870706357:web:afaf0b5e138d05af24d6fc"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 // ── CÁMARAS DISPONIBLES ──────────────────────────────
 const CAMARAS = [
   '17.300','17.400','18.300','18.400',
@@ -219,46 +235,21 @@ const CAMARAS = [
   '350.10','15'
 ];
 
-// ── STORAGE: intenta window.storage (Claude), si no usa localStorage ──
+// ── STORAGE ──────────────────────────────────────────
 const store = {
   async get(key) {
-    try {
-      if (window.storage) {
-        const r = await window.storage.get('cam:'+key, true);
-        return r ? JSON.parse(r.value) : null;
-      }
-    } catch {}
     try {
       const v = localStorage.getItem('cam:'+key);
       return v ? JSON.parse(v) : null;
     } catch { return null; }
   },
   async set(key, val) {
-    try {
-      if (window.storage) {
-        await window.storage.set('cam:'+key, JSON.stringify(val), true);
-        return;
-      }
-    } catch {}
     try { localStorage.setItem('cam:'+key, JSON.stringify(val)); } catch {}
   },
   async delete(key) {
-    try {
-      if (window.storage) {
-        await window.storage.delete('cam:'+key, true);
-        return;
-      }
-    } catch {}
     try { localStorage.removeItem('cam:'+key); } catch {}
   },
   async listKeys() {
-    try {
-      if (window.storage) {
-        const r = await window.storage.list('cam:', true);
-        return r && r.keys ? r.keys.map(k => k.replace('cam:','')) : [];
-      }
-    } catch {}
-    // localStorage fallback
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
@@ -266,7 +257,7 @@ const store = {
     }
     return keys;
   },
-  isShared() { return !!window.storage; }
+  isShared() { return false; }
 };
 
 let records = [];
@@ -294,7 +285,7 @@ function renderCameras() {
   updateSelectedCount();
 }
 
-function toggleCam(cam) {
+window.toggleCam = function(cam) {
   if (selectedCams.has(cam)) selectedCams.delete(cam);
   else selectedCams.add(cam);
   renderCameras();
@@ -305,33 +296,25 @@ function updateSelectedCount() {
   if (selectedCams.size === 0) {
     el.innerHTML = 'Ninguna cámara seleccionada';
   } else {
-    el.innerHTML = `<span>${selectedCams.size}</span> cámara${selectedCams.size>1?'s':''} seleccionada${selectedCams.size>1?'s':''}: <b style="color:#ff4500">${[...selectedCams].join(', ')}</b>`;
+    el.innerHTML = `<span>${selectedCams.size}</span> cámara${selectedCams.size>1?'s':''}: <b style="color:#ff4500">${[...selectedCams].join(', ')}</b>`;
   }
 }
 
 // ── LOAD RECORDS ─────────────────────────────────────
 async function loadRecords() {
-  try {
-    const keys = await store.listKeys();
-    const items = [];
-    for (const key of keys) {
-      try {
-        const r = await store.get(key);
-        if (r) items.push(r);
-      } catch {}
-    }
-    items.sort((a,b) => b.date.localeCompare(a.date));
-    records = items;
-  } catch(e) {
-    console.error('Error cargando:', e);
-    records = [];
+  const keys = await store.listKeys();
+  const items = [];
+  for (const key of keys) {
+    const r = await store.get(key);
+    if (r) items.push(r);
   }
+  items.sort((a,b) => b.date.localeCompare(a.date));
+  records = items;
   updateStats();
   renderCurrent();
-  // Mostrar banner si no es compartido
-  document.getElementById('firebaseBanner').style.display = store.isShared() ? 'none' : 'block';
 }
 
+// ── STATS ────────────────────────────────────────────
 function updateStats() {
   const total = records.reduce((s,r) => s+(r.count||0), 0);
   const max = records.length ? Math.max(...records.map(r=>r.count||0)) : 0;
@@ -342,144 +325,47 @@ function updateStats() {
   document.getElementById('sMax').textContent = max;
 }
 
-function renderCurrent() {
-  if (currentView === 'register') renderPreview();
-  else renderHistory();
-}
-
-function renderPreview() {
-  const section = document.getElementById('previewSection');
-  if (records.length === 0) { section.style.display='none'; return; }
-  section.style.display='block';
-  document.getElementById('btnViewAll').style.display = records.length > 3 ? 'block' : 'none';
-  document.getElementById('previewList').innerHTML = records.slice(0,3).map(r => recordHTML(r, false)).join('');
-}
-
-function renderHistory() {
-  document.getElementById('histCount').textContent = records.length + ' REGISTROS';
-  if (records.length === 0) {
-    document.getElementById('historyList').innerHTML = `<div class="empty">No hay registros aún.<br><a onclick="setView('register')">Cargar el primero →</a></div>`;
-    return;
-  }
-  document.getElementById('historyList').innerHTML = records.map(r => recordHTML(r, true)).join('');
-}
-
-function recordHTML(r, expanded) {
-  const cams = r.cameras && r.cameras.length ? r.cameras.join(', ') : '—';
-  const note = expanded && r.note ? `<div class="rnote">"${r.note}"</div>` : '';
-  const upd = expanded && r.updatedAt ? `<div class="rupdated">actualizado: ${new Date(r.updatedAt).toLocaleString('es-AR')}</div>` : '';
-  const camLine = expanded ? `<div class="rcams">📷 ${cams}</div>` : '';
-  return `
-    <div class="record">
-      <div class="record-top">
-        <div>
-          <div class="rdate">${formatDate(r.date)}</div>
-          ${camLine}${note}${upd}
-        </div>
-        <div class="record-right">
-          <div class="rcount">${r.count||0}</div>
-          <div class="rcountlabel">CÁMARAS</div>
-        </div>
-      </div>
-      <div class="record-actions">
-        <button class="btn-icon btn-edit" onclick='startEdit(${JSON.stringify(r)})'>✏ EDITAR</button>
-        <button class="btn-icon btn-del" onclick="handleDelete('${r.id}')">✕ BORRAR</button>
-      </div>
-    </div>`;
-}
-
-function setView(v) {
-  currentView = v;
-  document.getElementById('viewRegister').style.display = v==='register' ? 'block' : 'none';
-  document.getElementById('viewHistory').style.display = v==='history' ? 'block' : 'none';
-  document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    b.classList.toggle('active', (i===0&&v==='register')||(i===1&&v==='history'));
-  });
-  window.scrollTo({top:0, behavior:'smooth'});
-  renderCurrent();
-}
-
-function startEdit(r) {
-  editingId = r.id;
-  document.getElementById('inDate').value = r.date;
-  selectedCams = new Set(r.cameras || []);
-  document.getElementById('inNote').value = r.note || '';
-  document.getElementById('formTitle').textContent = '✏ EDITANDO REGISTRO';
-  document.getElementById('btnSave').textContent = 'ACTUALIZAR';
-  document.getElementById('btnCancel').style.display = 'block';
-  renderCameras();
-  setView('register');
-}
-
-function cancelEdit() {
-  editingId = null;
-  selectedCams = new Set();
-  document.getElementById('inDate').value = today();
-  document.getElementById('inNote').value = '';
-  document.getElementById('formTitle').textContent = '▶ NUEVO REGISTRO';
-  document.getElementById('btnSave').textContent = 'GUARDAR';
-  document.getElementById('btnCancel').style.display = 'none';
-  renderCameras();
-}
-
-async function handleSave() {
+// ── SAVE ─────────────────────────────────────────────
+window.handleSave = async function() {
   const date = document.getElementById('inDate').value;
-  if (!date) { showToast('Seleccioná una fecha.','err'); return; }
-  if (selectedCams.size === 0) { showToast('Seleccioná al menos una cámara.','err'); return; }
-
-  const btn = document.getElementById('btnSave');
-  btn.disabled = true; btn.textContent = 'GUARDANDO...';
+  if (!date) { alert('Seleccioná fecha'); return; }
+  if (selectedCams.size === 0) { alert('Seleccioná cámaras'); return; }
 
   const cameras = [...selectedCams];
-  const key = date;
+
   const record = {
-    id: 'cam:'+date, date,
+    id: 'cam:'+date,
+    date,
     cameras,
     count: cameras.length,
     note: document.getElementById('inNote').value.trim(),
-    updatedAt: new Date().toISOString()
+    createdAt: new Date().toISOString()
   };
 
-  try {
-    await store.set(key, record);
-    showToast('✓ Guardado correctamente');
-    cancelEdit();
-    await loadRecords();
-  } catch(e) {
-    console.error(e);
-    showToast('Error al guardar. Intentá de nuevo.','err');
-  }
-  btn.disabled = false;
-  btn.textContent = editingId ? 'ACTUALIZAR' : 'GUARDAR';
+  // LOCAL
+  await store.set(date, record);
+
+  // FIREBASE 🔥
+  await addDoc(collection(db, "registros"), record);
+
+  alert("Guardado en Firebase 🚀");
+
+  selectedCams.clear();
+  document.getElementById('inNote').value = '';
+  renderCameras();
+  loadRecords();
 }
 
-async function handleDelete(id) {
-  if (!confirm('¿Eliminar este registro?')) return;
+// ── DELETE ───────────────────────────────────────────
+window.handleDelete = async function(id) {
   const key = id.replace('cam:','');
-  try {
-    await store.delete(key);
-    showToast('Registro eliminado');
-    await loadRecords();
-  } catch {
-    showToast('Error al eliminar.','err');
-  }
-}
-
-let toastTimer;
-function showToast(msg, type='ok') {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = type;
-  t.style.display = 'block';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.style.display='none'; }, 3000);
+  await store.delete(key);
+  loadRecords();
 }
 
 // ── INIT ─────────────────────────────────────────────
 document.getElementById('inDate').value = today();
 renderCameras();
 loadRecords();
-</script>
 
-</body>
-</html>
+</script>
